@@ -20,14 +20,16 @@ class TestSecDef:
 
     @classmethod
     def setup_class(cls):
-        TestSecDef.secdef_filename = tempfile.NamedTemporaryFile().name
-        urllib.urlretrieve(TestSecDef.secdef_url, TestSecDef.secdef_filename)
+        temp_path = os.path.normpath('./tests/sbe_test_files/secdef.dat.gz')
+        TestSecDef.secdef_filename = os.path.realpath(temp_path)
+        # urllib.urlretrieve(TestSecDef.secdef_url, TestSecDef.secdef_filename)
         TestSecDef.secdef = SecDef()
         TestSecDef.secdef.load(TestSecDef.secdef_filename)
 
     @classmethod
     def teardown_class(cls):
-        os.remove(TestSecDef.secdef_filename)
+        pass
+        # os.remove(TestSecDef.secdef_filename)
 
     def test_lookup_security_id_not_found(self):
         assert_is_none(TestSecDef.secdef.lookup_security_id(9999999))

@@ -1,5 +1,8 @@
 from setuptools import setup
 
+install_requires = ['dpkt', 'lxml', 'mako', 'autopep8']
+test_requires = ['nose']
+
 setup(
     name="sbedecoder",
     version="0.1",
@@ -12,5 +15,6 @@ setup(
     packages=['sbedecoder', 'orderbook'],
     scripts=['scripts/mdp_decoder.py', 'scripts/mdp_book_builder.py'],
     long_description='see https://github.com/tfgm/sbedecoder/INSTALL.md',
-    install_requires=['dpkt', 'lxml', 'nose', 'mako', 'autopep8'],
+    install_requires=install_requires,
+    tests_require=test_requires
 )
