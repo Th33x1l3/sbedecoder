@@ -1,5 +1,7 @@
 import re
+
 from lxml import etree
+
 from sbedecoder.message import SBEMessage, TypeMessageField, EnumMessageField, SetMessageField, CompositeMessageField, \
     SBERepeatingGroupIterator
 
@@ -29,6 +31,10 @@ class SBESchema(object):
             'uint64': ('Q', 8),
         }
 
+        self.primitive_type_definitions = {
+            'char': {'primitive_type': 'char', 'length': '1', 'type': 'type', 'name': 'char', 'children': []}
+        }
+
     @staticmethod
     def _build_type_definition(type_definition):
         type_configuration = dict((convert_to_underscore(x[0]), x[1]) for x in type_definition.items())
@@ -49,7 +55,7 @@ class SBESchema(object):
     def _parse_types(self, xml_file, types_tag='types'):
         type_map = {}
         with open(xml_file) as input_schema_file:
-            xml_context = etree.iterparse(input_schema_file, tag=types_tag)
+            xml_context = etree.iterparse(input_schema_file, tag=types_tag, remove_comments=True)
             for action, elem in xml_context:
                 # Now parse all the children under the types tag
                 for type_def in elem.getchildren():
@@ -61,7 +67,7 @@ class SBESchema(object):
     def _parse_messages(xml_file, message_tag='message'):
         messages = []
         with open(xml_file) as input_schema_file:
-            xml_context = etree.iterparse(input_schema_file)
+            xml_context = etree.iterparse(input_schema_file, remove_comments=True)
             for action, elem in xml_context:
                 local_name = etree.QName(elem.tag).localname
                 if local_name == message_tag:
@@ -89,8 +95,12 @@ class SBESchema(object):
 
     def _build_message_field(self, field_definition, offset, header_size=10, endian='<', add_header_size=True):
         field_name = convert_to_underscore(field_definition['name'])
-        field_description = field_definition['description']
-        field_type = self.type_map[field_definition['type']]
+        field_description = field_definition['description'] if 'description' in field_definition else ''
+        if field_definition['type'] in self.type_map:
+            field_type = self.type_map[field_definition['type']]
+        else:
+            field_type = self.primitive_type_definitions[field_definition['type']]
+
         field_type_type = field_type['type']
         field_semantic_type = field_type.get('semantic_type', None)
         is_string_type = (field_semantic_type == 'String')
@@ -103,14 +113,14 @@ class SBESchema(object):
                 if add_header_size:
                     field_offset += header_size
 
-            primitive_type_fmt, primitive_type_size = self.primitive_type_map[field_type['primitive_type']]
+            primitive_type_fmt, primitive_type_size = self.get_type_format(field_type['primitive_type'])
 
             unpack_fmt = endian
             field_length = field_type.get('length', None)
             if field_length is not None:
                 field_length = int(field_length)
                 if is_string_type:
-                    unpack_fmt += '%ss' % (str(field_length), )
+                    unpack_fmt += '%ss' % (str(field_length),)
                 else:
                     unpack_fmt += '%s%s' % (str(field_length), primitive_type_fmt)
             else:
@@ -141,8 +151,7 @@ class SBESchema(object):
                                              is_string_type=is_string_type)
         elif field_type_type == 'enum':
             encoding_type = field_type['encoding_type']
-            encoding_type_type = self.type_map[encoding_type]
-            primitive_type_fmt, primitive_type_size = self.primitive_type_map[encoding_type_type['primitive_type']]
+            primitive_type_fmt, primitive_type_size = self.get_type_format(encoding_type)
 
             field_offset = offset
             if field_definition.get('offset', None) is not None:
@@ -169,8 +178,7 @@ class SBESchema(object):
                                              field_length=field_length)
         elif field_type_type == 'set':
             encoding_type = field_type['encoding_type']
-            encoding_type_type = self.type_map[encoding_type]
-            primitive_type_fmt, primitive_type_size = self.primitive_type_map[encoding_type_type['primitive_type']]
+            primitive_type_fmt, primitive_type_size = self.get_type_format(encoding_type)
 
             field_offset = offset
             if field_definition.get('offset', None) is not None:
@@ -204,7 +212,7 @@ class SBESchema(object):
             float_composite = False
             field_length = 0
             for child in field_type['children']:
-                primitive_type_fmt, primitive_type_size = self.primitive_type_map[child['primitive_type']]
+                primitive_type_fmt, primitive_type_size = self.get_type_format(child['primitive_type'])
                 unpack_fmt = endian + primitive_type_fmt
 
                 constant = None
@@ -235,7 +243,7 @@ class SBESchema(object):
                 field_offset += primitive_type_size
                 field_length += primitive_type_size
                 composite_parts.append(composite_field)
- 
+
             message_field = CompositeMessageField(name=field_name, description=field_description,
                                                   field_offset=field_offset, field_length=field_length,
                                                   parts=composite_parts,
@@ -252,12 +260,17 @@ class SBESchema(object):
         # Now construct each message with its expected field types
         for message in self.messages:
             field_offset = 0
-        
+
             # All messages start with a message size field
             message_id = int(message['id'])
-            schema_block_length = int(message['block_length'])
-            message_type = type(message['description'], (SBEMessage,), {'message_id': message_id,
-                                                                        'schema_block_length': schema_block_length})
+            description = message['description'] if 'description' in message else message['id']
+
+            if 'block_length' in message:
+                schema_block_length = int(message['block_length'])
+                message_type = type(description, (SBEMessage,), {'message_id': message_id,
+                                                                 'schema_block_length': schema_block_length})
+            else:
+                message_type = type(description, (SBEMessage,), {'message_id': message_id})
 
             message_fields = []
             # All messages start with a message size field
@@ -309,7 +322,7 @@ class SBESchema(object):
                         primitive_type_fmt, primitive_type_size = self.primitive_type_map[primitive_type]
                         block_length_field = TypeMessageField(name=convert_to_underscore(child['name']),
                                                               description=child['name'],
-                                                              unpack_fmt=endian+primitive_type_fmt,
+                                                              unpack_fmt=endian + primitive_type_fmt,
                                                               field_offset=block_field_offset,
                                                               field_length=primitive_type_size)
                         block_field_offset += primitive_type_size
@@ -320,7 +333,7 @@ class SBESchema(object):
                         primitive_type_fmt, primitive_type_size = self.primitive_type_map[primitive_type]
                         num_in_group_field = TypeMessageField(name=convert_to_underscore(child['name']),
                                                               description=child['name'],
-                                                              unpack_fmt=endian+primitive_type_fmt,
+                                                              unpack_fmt=endian + primitive_type_fmt,
                                                               field_offset=block_field_offset,
                                                               field_length=primitive_type_size)
                         block_field_offset += primitive_type_size
@@ -343,6 +356,16 @@ class SBESchema(object):
             setattr(message_type, 'iterators', repeating_groups)
 
             self.message_map[message_id] = message_type
+
+    def get_type_format(self, given_type):
+        if given_type in self.type_map:
+            encoding_type_type = self.type_map[given_type]
+            primitive_type_fmt, primitive_type_size = self.primitive_type_map[encoding_type_type['primitive_type']]
+        else:
+
+            primitive_type_fmt, primitive_type_size = self.primitive_type_map[given_type]
+
+        return primitive_type_fmt, primitive_type_size
 
     def load(self, messages):
         self.messages = messages

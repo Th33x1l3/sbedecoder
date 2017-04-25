@@ -117,7 +117,7 @@ class EnumMessageField(SBEMessageField):
         self.field_offset = field_offset
         self.enum_values = enum_values
         self.field_length = field_length
-        self.text_to_enum_value = dict((x['text'], x['description']) for x in enum_values)
+        self.text_to_enum_value = dict((x['text'], x['description'] if 'description' in x else '') for x in enum_values)
 
     @property
     def value(self):
@@ -164,7 +164,7 @@ class CompositeMessageField(SBEMessageField):
             mantissa = _raw_value.get('mantissa', None)
             exponent = _raw_value.get('exponent', None)
             if mantissa is None or exponent is None:
-                return None 
+                return None
             return float(mantissa) * math.pow(10, exponent)
 
         return self.raw_value
